@@ -1,0 +1,173 @@
+name: CI/CD Pipeline - WebXemPhim
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  # =============================================
+  # JOB 1: CI - Kiểm thử Backend (chạy mọi branch)
+  # =============================================
+  test-backend:
+    name: "CI - Backend (Node.js)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Lint & Syntax check (node --check)
+        working-directory: backend
+        run: |
+          node --check app.js
+          node --check utils/db.js
+          node --check middleware/auth.js
+          echo "✅ Backend syntax OK"
+
+      - name: Verify backend structure
+        working-directory: backend
+        run: |
+          echo "--- Models ---"
+          ls models/
+          echo "--- Routes ---"
+          ls routes/
+          echo "--- Middleware ---"
+          ls middleware/
+          echo "✅ Structure verified"
+
+  # =============================================
+  # JOB 2: CI - Build Frontend (chạy mọi branch)
+  # =============================================
+  build-frontend:
+    name: "CI - Frontend (React)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build React app
+        working-directory: frontend
+        env:
+          REACT_APP_API_URL: ${{ secrets.REACT_APP_API_URL || 'http://localhost:5000' }}
+          CI: false
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/build/
+          retention-days: 7
+
+  # =============================================
+  # JOB 3: CD - Deploy lên Render (chỉ branch main)
+  # =============================================
+  deploy-backend:
+    name: "CD - Deploy Backend (Render)"
+    runs-on: ubuntu-latest
+    needs: [test-backend, build-frontend]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy Backend lên Render via Deploy Hook
+        run: |
+          echo "🚀 Triggering Render deploy for Backend..."
+          if [ -n "${{ secrets.RENDER_DEPLOY_HOOK_BACKEND }}" ]; then
+            curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_BACKEND }}" \
+              -H "Content-Type: application/json" \
+              --fail-with-body
+            echo "✅ Backend deploy triggered"
+          else
+            echo "⚠️  RENDER_DEPLOY_HOOK_BACKEND secret chưa được cấu hình"
+            echo "   Vào Settings > Secrets > New repository secret để thêm"
+          fi
+
+  deploy-frontend:
+    name: "CD - Deploy Frontend (Vercel/Render)"
+    runs-on: ubuntu-latest
+    needs: [test-backend, build-frontend]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download frontend build
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/build
+
+      - name: Deploy Frontend lên Render via Deploy Hook
+        run: |
+          echo "🚀 Triggering Render deploy for Frontend..."
+          if [ -n "${{ secrets.RENDER_DEPLOY_HOOK_FRONTEND }}" ]; then
+            curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_FRONTEND }}" \
+              -H "Content-Type: application/json" \
+              --fail-with-body
+            echo "✅ Frontend deploy triggered"
+          else
+            echo "⚠️  RENDER_DEPLOY_HOOK_FRONTEND secret chưa được cấu hình"
+            echo "   Vào Settings > Secrets > New repository secret để thêm"
+          fi
+
+  # =============================================
+  # JOB 4: Thông báo kết quả (chỉ develop)
+  # =============================================
+  notify-develop:
+    name: "Notify - Develop Build Status"
+    runs-on: ubuntu-latest
+    needs: [test-backend, build-frontend]
+    if: github.ref == 'refs/heads/develop' && always()
+
+    steps:
+      - name: Report build status
+        run: |
+          echo "================================================"
+          echo "📊 DEVELOP BRANCH BUILD REPORT"
+          echo "================================================"
+          echo "Branch   : ${{ github.ref_name }}"
+          echo "Commit   : ${{ github.sha }}"
+          echo "Author   : ${{ github.actor }}"
+          echo "Backend  : ${{ needs.test-backend.result }}"
+          echo "Frontend : ${{ needs.build-frontend.result }}"
+          echo "================================================"
+          if [[ "${{ needs.test-backend.result }}" == "success" && "${{ needs.build-frontend.result }}" == "success" ]]; then
+            echo "✅ All checks passed! Ready to merge to main."
+          else
+            echo "❌ Some checks failed. Review logs above."
+            exit 1
+          fi
