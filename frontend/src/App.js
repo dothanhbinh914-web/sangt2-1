@@ -15,6 +15,7 @@ import FilterPage from './pages/FilterPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ProfilePage from './pages/ProfilePage';
 
 // Admin pages
 import AdminLayout from './pages/admin/AdminLayout';
@@ -52,6 +53,8 @@ function App() {
             <Route path="/movie/:id" element={<MovieDetail />} />
             <Route path="/watch/:id" element={<WatchPage />} />
             <Route path="/filter" element={<FilterPage />} />
+            <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+
           </Route>
         </Routes>
       </Router>

@@ -43,10 +43,15 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  const updateUser = (updatedUser) => {
+    setUser(updatedUser);
+    localStorage.setItem('user', JSON.stringify(updatedUser));
+  };
+
   const isAdmin = user?.vai_tro === 'admin';
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, isAdmin }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, isAdmin, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

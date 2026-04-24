@@ -1,7 +1,25 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
+const multer = require('multer');
 const TaiKhoan = require('../models/TaiKhoan');
 const { generateToken, protect } = require('../middleware/auth');
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, path.join(__dirname, '../uploads/avatars')),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `avatar_${req.user._id}_${Date.now()}${ext}`);
+  },
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    allowed.includes(file.mimetype) ? cb(null, true) : cb(new Error('Định dạng ảnh không hợp lệ'));
+  },
+});
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
@@ -93,13 +111,57 @@ router.get('/me', protect, async (req, res) => {
 // PUT /api/auth/profile
 router.put('/profile', protect, async (req, res) => {
   try {
-    const { ho_ten, hinh_dai_dien } = req.body;
+    const { ho_ten, email } = req.body;
+    if (email && email !== req.user.email) {
+      const exists = await TaiKhoan.findOne({ email, _id: { $ne: req.user._id } });
+      if (exists) return res.status(400).json({ message: 'Email đã được sử dụng' });
+    }
     const user = await TaiKhoan.findByIdAndUpdate(
       req.user._id,
-      { ho_ten, hinh_dai_dien, ngay_cap_nhat: new Date() },
+      { ho_ten, email, ngay_cap_nhat: new Date() },
       { new: true }
     ).select('-mat_khau');
-    res.json({ user });
+    res.json({ message: 'Cập nhật thông tin thành công!', user });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// POST /api/auth/upload-avatar
+router.post('/upload-avatar', protect, upload.single('hinh_dai_dien_file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'Không có file được upload' });
+    const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+    const user = await TaiKhoan.findByIdAndUpdate(
+      req.user._id,
+      { hinh_dai_dien: avatarUrl, ngay_cap_nhat: new Date() },
+      { new: true }
+    ).select('-mat_khau');
+    res.json({ message: 'Cập nhật ảnh thành công!', user });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// PUT /api/auth/change-password
+router.put('/change-password', protect, async (req, res) => {
+  try {
+    const { old_password, new_password, new_password_confirmation } = req.body;
+    if (!old_password || !new_password || !new_password_confirmation) {
+      return res.status(400).json({ message: 'Vui lòng điền đầy đủ thông tin' });
+    }
+    if (new_password !== new_password_confirmation) {
+      return res.status(400).json({ message: 'Mật khẩu xác nhận không khớp' });
+    }
+    if (new_password.length < 6) {
+      return res.status(400).json({ message: 'Mật khẩu mới phải có ít nhất 6 ký tự' });
+    }
+    const user = await TaiKhoan.findById(req.user._id);
+    const isMatch = await user.comparePassword(old_password);
+    if (!isMatch) return res.status(400).json({ message: 'Mật khẩu cũ không đúng' });
+    user.mat_khau = new_password;
+    await user.save();
+    res.json({ message: 'Đổi mật khẩu thành công!' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
