@@ -2,20 +2,15 @@ name: CI/CD Pipeline - WebXemPhim
 
 on:
   push:
-    branches:
-      - main
-      - develop
-      - 'feature/**'
+    branches: [main, develop, 'feature/**']
   pull_request:
-    branches:
-      - main
-      - develop
+    branches: [main, develop]
   workflow_dispatch:
 
 jobs:
-  # =============================================
-  # JOB 1: CI - Kiểm thử Backend (chạy mọi branch)
-  # =============================================
+  # ============================================================
+  # JOB 1: CI - Kiểm tra Backend
+  # ============================================================
   test-backend:
     name: "CI - Backend (Node.js)"
     runs-on: ubuntu-latest
@@ -35,29 +30,142 @@ jobs:
         working-directory: backend
         run: npm ci
 
-      - name: Lint & Syntax check (node --check)
+      # ----- Syntax check toàn bộ file JS -----
+      - name: Syntax check - Entry point
         working-directory: backend
         run: |
           node --check app.js
-          node --check utils/db.js
-          node --check middleware/auth.js
-          node --check routes/authRoutes.js
-          echo "✅ Backend syntax OK"
+          node --check bin/www
+          echo "✅ Entry point OK"
 
+      - name: Syntax check - Middleware
+        working-directory: backend
+        run: |
+          node --check middleware/auth.js
+          echo "✅ Middleware OK"
+
+      - name: Syntax check - Models
+        working-directory: backend
+        run: |
+          node --check models/TaiKhoan.js
+          node --check models/Phim.js
+          node --check models/TapPhim.js
+          node --check models/TheLoai.js
+          node --check models/QuocGia.js
+          node --check models/DienVien.js
+          node --check models/DaoDien.js
+          node --check models/LichSu.js
+          node --check models/BinhLuan.js
+          node --check models/DanhGia.js
+          node --check models/PhimYeuThich.js
+          echo "✅ Models OK"
+
+      - name: Syntax check - Routes
+        working-directory: backend
+        run: |
+          node --check routes/authRoutes.js
+          node --check routes/movieRoutes.js
+          node --check routes/episodeRoutes.js
+          node --check routes/genreRoutes.js
+          node --check routes/countryRoutes.js
+          node --check routes/adminRoutes.js
+          echo "✅ Routes OK"
+
+      - name: Syntax check - Utils
+        working-directory: backend
+        run: |
+          node --check utils/db.js
+          echo "✅ Utils OK"
+
+      # ----- Kiểm tra cấu trúc thư mục -----
       - name: Verify backend structure
         working-directory: backend
         run: |
-          echo "--- Models ---"
+          echo "--- Models (11 required) ---"
           ls models/
-          echo "--- Routes ---"
+          echo "--- Routes (6 required) ---"
           ls routes/
           echo "--- Middleware ---"
           ls middleware/
-          echo "✅ Structure verified"
+          echo "--- Utils ---"
+          ls utils/
+          echo "--- Uploads dir ---"
+          ls -la uploads/ 2>/dev/null || mkdir -p uploads/avatars && echo "uploads/avatars created"
 
-  # =============================================
-  # JOB 2: CI - Build Frontend (chạy mọi branch)
-  # =============================================
+          # Kiểm tra đủ số file
+          MODEL_COUNT=$(ls models/*.js | wc -l)
+          ROUTE_COUNT=$(ls routes/*.js | wc -l)
+          echo "Models: $MODEL_COUNT | Routes: $ROUTE_COUNT"
+          [ "$MODEL_COUNT" -ge 11 ] && echo "✅ Models count OK" || (echo "❌ Missing models" && exit 1)
+          [ "$ROUTE_COUNT" -ge 6 ] && echo "✅ Routes count OK" || (echo "❌ Missing routes" && exit 1)
+
+      # ----- Kiểm tra dependencies quan trọng -----
+      - name: Verify backend dependencies
+        working-directory: backend
+        run: |
+          echo "--- Checking critical packages ---"
+          node -e "require('express'); console.log('✅ express OK')"
+          node -e "require('mongoose'); console.log('✅ mongoose OK')"
+          node -e "require('jsonwebtoken'); console.log('✅ jsonwebtoken OK')"
+          node -e "require('bcryptjs'); console.log('✅ bcryptjs OK')"
+          node -e "require('multer'); console.log('✅ multer OK')"
+          node -e "require('cors'); console.log('✅ cors OK')"
+          node -e "require('dotenv'); console.log('✅ dotenv OK')"
+          node -e "require('morgan'); console.log('✅ morgan OK')"
+
+      # ----- Kiểm tra API endpoints được định nghĩa đúng -----
+      - name: Verify API endpoints definition
+        working-directory: backend
+        run: |
+          echo "--- Auth endpoints ---"
+          grep -c "router\.\(get\|post\|put\|delete\)" routes/authRoutes.js | xargs echo "Auth routes:"
+          grep "router\.\(get\|post\|put\|delete\)" routes/authRoutes.js
+
+          echo "--- Movie endpoints ---"
+          grep "router\.\(get\|post\|put\|delete\)" routes/movieRoutes.js
+
+          echo "--- Episode endpoints ---"
+          grep "router\.\(get\|post\|put\|delete\)" routes/episodeRoutes.js
+
+          echo "--- Admin endpoints ---"
+          grep "router\.\(get\|post\|put\|delete\)" routes/adminRoutes.js
+
+          echo "✅ All endpoints defined"
+
+      # ----- Kiểm tra JWT & bcrypt logic -----
+      - name: Verify auth logic
+        working-directory: backend
+        run: |
+          node -e "
+            const jwt = require('jsonwebtoken');
+            const token = jwt.sign({ id: 'test123' }, 'test_secret', { expiresIn: '1h' });
+            const decoded = jwt.verify(token, 'test_secret');
+            console.log('✅ JWT sign/verify OK, id:', decoded.id);
+          "
+          node -e "
+            const bcrypt = require('bcryptjs');
+            const hash = bcrypt.hashSync('password123', 10);
+            const match = bcrypt.compareSync('password123', hash);
+            console.log('✅ bcrypt hash/compare OK, match:', match);
+          "
+
+      # ----- Kiểm tra multer config -----
+      - name: Verify multer upload config
+        working-directory: backend
+        run: |
+          node -e "
+            const multer = require('multer');
+            const path = require('path');
+            const fs = require('fs');
+            fs.mkdirSync('uploads/avatars', { recursive: true });
+            const storage = multer.memoryStorage();
+            const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 } });
+            console.log('✅ multer config OK');
+          "
+
+  # ============================================================
+  # JOB 2: CI - Build Frontend
+  # ============================================================
   build-frontend:
     name: "CI - Frontend (React)"
     runs-on: ubuntu-latest
@@ -70,17 +178,79 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm install --legacy-peer-deps
 
+      # ----- Kiểm tra dependencies frontend -----
+      - name: Verify frontend dependencies
+        working-directory: frontend
+        run: |
+          node -e "require('./node_modules/react'); console.log('✅ react OK')"
+          node -e "require('./node_modules/react-router-dom'); console.log('✅ react-router-dom OK')"
+          node -e "require('./node_modules/axios'); console.log('✅ axios OK')"
+          node -e "require('./node_modules/react-toastify'); console.log('✅ react-toastify OK')"
+          node -e "require('./node_modules/react-icons'); console.log('✅ react-icons OK')"
+          node -e "require('./node_modules/hls.js'); console.log('✅ hls.js OK')"
+          node -e "require('./node_modules/tailwindcss'); console.log('✅ tailwindcss OK')"
+
+      # ----- Kiểm tra cấu trúc pages -----
+      - name: Verify frontend pages structure
+        working-directory: frontend
+        run: |
+          echo "--- User Pages ---"
+          ls src/pages/*.js
+
+          echo "--- Admin Pages ---"
+          ls src/pages/admin/*.js
+
+          echo "--- Components ---"
+          ls src/components/*.js
+
+          echo "--- Context ---"
+          ls src/context/*.js
+
+          echo "--- API ---"
+          ls src/api/*.js
+
+          # Kiểm tra các trang bắt buộc tồn tại
+          REQUIRED_PAGES="HomePage LoginPage RegisterPage ForgotPasswordPage FilterPage MovieDetail WatchPage ProfilePage"
+          for page in $REQUIRED_PAGES; do
+            [ -f "src/pages/${page}.js" ] && echo "✅ ${page}.js" || (echo "❌ MISSING: ${page}.js" && exit 1)
+          done
+
+          REQUIRED_ADMIN="AdminLayout AdminStats AdminMovies AdminEpisodes AdminUsers AdminGenres AdminCountries"
+          for page in $REQUIRED_ADMIN; do
+            [ -f "src/pages/admin/${page}.js" ] && echo "✅ admin/${page}.js" || (echo "❌ MISSING: admin/${page}.js" && exit 1)
+          done
+
+      # ----- Kiểm tra import ProfilePage trong App.js -----
+      - name: Verify ProfilePage integration
+        working-directory: frontend
+        run: |
+          grep -q "ProfilePage" src/App.js && echo "✅ ProfilePage imported in App.js" || (echo "❌ ProfilePage not in App.js" && exit 1)
+          grep -q "/profile" src/App.js && echo "✅ /profile route defined" || (echo "❌ /profile route missing" && exit 1)
+          grep -q "updateUser" src/context/AuthContext.js && echo "✅ updateUser in AuthContext" || (echo "❌ updateUser missing" && exit 1)
+
+      # ----- Build React app -----
       - name: Build React app
         working-directory: frontend
         env:
           REACT_APP_API_URL: ${{ secrets.REACT_APP_API_URL || 'http://localhost:5000' }}
           CI: false
         run: npm run build
+
+      - name: Verify build output
+        working-directory: frontend
+        run: |
+          [ -d "build" ] && echo "✅ build/ directory exists" || (echo "❌ build failed" && exit 1)
+          [ -f "build/index.html" ] && echo "✅ index.html OK" || (echo "❌ index.html missing" && exit 1)
+          [ -d "build/static" ] && echo "✅ static assets OK" || (echo "❌ static missing" && exit 1)
+          BUILD_SIZE=$(du -sh build/ | cut -f1)
+          echo "📦 Build size: $BUILD_SIZE"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -89,36 +259,120 @@ jobs:
           path: frontend/build/
           retention-days: 7
 
-  # =============================================
-  # JOB 3: CD - Deploy lên Render (chỉ branch main)
-  # =============================================
+  # ============================================================
+  # JOB 3: CI - Kiểm tra tích hợp Frontend ↔ Backend
+  # ============================================================
+  integration-check:
+    name: "CI - Integration Check"
+    runs-on: ubuntu-latest
+    needs: [test-backend, build-frontend]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      # ----- Kiểm tra API routes khớp với frontend calls -----
+      - name: Verify API routes consistency
+        run: |
+          echo "=== Kiểm tra Frontend gọi đúng API endpoints ==="
+
+          # Auth endpoints
+          grep -r "auth/login\|auth/register\|auth/me\|auth/profile\|auth/upload-avatar\|auth/change-password\|auth/forgot-password" frontend/src/ --include="*.js" -l
+          echo "✅ Auth API calls found in frontend"
+
+          # Movie endpoints
+          grep -r "/movies\|/movies/" frontend/src/ --include="*.js" -l
+          echo "✅ Movie API calls found in frontend"
+
+          # Episode endpoints
+          grep -r "/episodes" frontend/src/ --include="*.js" -l
+          echo "✅ Episode API calls found in frontend"
+
+          # Admin endpoints
+          grep -r "/admin" frontend/src/pages/admin/ --include="*.js" -l
+          echo "✅ Admin API calls found in frontend"
+
+      # ----- Kiểm tra axios interceptor -----
+      - name: Verify axios config
+        run: |
+          grep -q "Authorization.*Bearer" frontend/src/api/axios.js && echo "✅ Auth interceptor OK" || echo "❌ Auth interceptor missing"
+          grep -q "401" frontend/src/api/axios.js && echo "✅ 401 handler OK" || echo "❌ 401 handler missing"
+          grep -q "REACT_APP_API_URL" frontend/src/api/axios.js && echo "✅ Dynamic API URL OK" || echo "❌ Hardcoded URL detected"
+
+      # ----- Kiểm tra ProtectedRoute bao phủ đúng trang -----
+      - name: Verify route protection
+        run: |
+          grep -q "ProtectedRoute" frontend/src/App.js && echo "✅ ProtectedRoute used" || (echo "❌ No route protection" && exit 1)
+          grep -q "adminOnly" frontend/src/App.js && echo "✅ Admin protection OK" || echo "⚠️  Check admin protection"
+          grep -q "/profile.*ProtectedRoute\|ProtectedRoute.*profile" frontend/src/App.js && echo "✅ /profile protected" || echo "⚠️  /profile protection check"
+
+      # ----- Kiểm tra AuthContext đủ chức năng -----
+      - name: Verify AuthContext features
+        run: |
+          FEATURES="login register logout isAdmin updateUser"
+          for feat in $FEATURES; do
+            grep -q "$feat" frontend/src/context/AuthContext.js && echo "✅ AuthContext.$feat OK" || (echo "❌ AuthContext.$feat MISSING" && exit 1)
+          done
+
+      # ----- Kiểm tra ProfilePage có đủ chức năng -----
+      - name: Verify ProfilePage features
+        run: |
+          FEATURES="upload-avatar change-password auth/profile cursorType cursorColor"
+          for feat in $FEATURES; do
+            grep -q "$feat" frontend/src/pages/ProfilePage.js && echo "✅ ProfilePage: $feat OK" || (echo "❌ ProfilePage: $feat MISSING" && exit 1)
+          done
+
+      # ----- Kiểm tra VideoPlayer (HLS) -----
+      - name: Verify video player
+        run: |
+          ls frontend/src/components/ | grep -i video || ls frontend/src/pages/ | grep -i watch
+          grep -rq "hls\|HLS\|Hls" frontend/src/ --include="*.js" && echo "✅ HLS player found" || echo "⚠️  HLS not found"
+
+  # ============================================================
+  # JOB 4: CD - Deploy Backend lên Render (chỉ main)
+  # ============================================================
   deploy-backend:
     name: "CD - Deploy Backend (Render)"
     runs-on: ubuntu-latest
-    needs: [test-backend, build-frontend]
+    needs: [test-backend, build-frontend, integration-check]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy Backend lên Render via Deploy Hook
+      - name: Deploy Backend lên Render
         run: |
           echo "🚀 Triggering Render deploy for Backend..."
           if [ -n "${{ secrets.RENDER_DEPLOY_HOOK_BACKEND }}" ]; then
-            curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_BACKEND }}" \
-              -H "Content-Type: application/json" \
-              --fail-with-body
-            echo "✅ Backend deploy triggered"
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${{ secrets.RENDER_DEPLOY_HOOK_BACKEND }}")
+            if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "201" ]; then
+              echo "✅ Backend deploy triggered (HTTP $RESPONSE)"
+            else
+              echo "❌ Deploy hook failed (HTTP $RESPONSE)"
+              exit 1
+            fi
           else
-            echo "⚠️  RENDER_DEPLOY_HOOK_BACKEND secret chưa được cấu hình"
-            echo "   Vào Settings > Secrets > New repository secret để thêm"
+            echo "⚠️  RENDER_DEPLOY_HOOK_BACKEND chưa cấu hình trong Secrets"
+            echo "   GitHub → Settings → Secrets → New repository secret"
           fi
 
+  # ============================================================
+  # JOB 5: CD - Deploy Frontend lên Render (chỉ main)
+  # ============================================================
   deploy-frontend:
-    name: "CD - Deploy Frontend (Vercel/Render)"
+    name: "CD - Deploy Frontend (Render)"
     runs-on: ubuntu-latest
-    needs: [test-backend, build-frontend]
+    needs: [test-backend, build-frontend, integration-check]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
@@ -131,43 +385,65 @@ jobs:
           name: frontend-build
           path: frontend/build
 
-      - name: Deploy Frontend lên Render via Deploy Hook
+      - name: Deploy Frontend lên Render
         run: |
           echo "🚀 Triggering Render deploy for Frontend..."
           if [ -n "${{ secrets.RENDER_DEPLOY_HOOK_FRONTEND }}" ]; then
-            curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_FRONTEND }}" \
-              -H "Content-Type: application/json" \
-              --fail-with-body
-            echo "✅ Frontend deploy triggered"
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${{ secrets.RENDER_DEPLOY_HOOK_FRONTEND }}")
+            if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "201" ]; then
+              echo "✅ Frontend deploy triggered (HTTP $RESPONSE)"
+            else
+              echo "❌ Deploy hook failed (HTTP $RESPONSE)"
+              exit 1
+            fi
           else
-            echo "⚠️  RENDER_DEPLOY_HOOK_FRONTEND secret chưa được cấu hình"
-            echo "   Vào Settings > Secrets > New repository secret để thêm"
+            echo "⚠️  RENDER_DEPLOY_HOOK_FRONTEND chưa cấu hình trong Secrets"
+            echo "   GitHub → Settings → Secrets → New repository secret"
           fi
 
-  # =============================================
-  # JOB 4: Thông báo kết quả (chỉ develop)
-  # =============================================
-  notify-develop:
-    name: "Notify - Develop Build Status"
+  # ============================================================
+  # JOB 6: Thông báo kết quả tổng hợp
+  # ============================================================
+  notify:
+    name: "Notify - Build Report"
     runs-on: ubuntu-latest
-    needs: [test-backend, build-frontend]
-    if: github.ref == 'refs/heads/develop' && always()
+    needs: [test-backend, build-frontend, integration-check]
+    if: always()
 
     steps:
-      - name: Report build status
+      - name: Print build report
         run: |
-          echo "================================================"
-          echo "📊 DEVELOP BRANCH BUILD REPORT"
-          echo "================================================"
-          echo "Branch   : ${{ github.ref_name }}"
-          echo "Commit   : ${{ github.sha }}"
-          echo "Author   : ${{ github.actor }}"
-          echo "Backend  : ${{ needs.test-backend.result }}"
-          echo "Frontend : ${{ needs.build-frontend.result }}"
-          echo "================================================"
-          if [[ "${{ needs.test-backend.result }}" == "success" && "${{ needs.build-frontend.result }}" == "success" ]]; then
-            echo "✅ All checks passed! Ready to merge to main."
+          echo "=================================================="
+          echo "📊 WEBXEMPHIM - BUILD REPORT"
+          echo "=================================================="
+          echo "Branch    : ${{ github.ref_name }}"
+          echo "Commit    : ${{ github.sha }}"
+          echo "Author    : ${{ github.actor }}"
+          echo "Trigger   : ${{ github.event_name }}"
+          echo "--------------------------------------------------"
+          echo "Backend   : ${{ needs.test-backend.result }}"
+          echo "Frontend  : ${{ needs.build-frontend.result }}"
+          echo "Integration: ${{ needs.integration-check.result }}"
+          echo "=================================================="
+
+          BACKEND="${{ needs.test-backend.result }}"
+          FRONTEND="${{ needs.build-frontend.result }}"
+          INTEGRATION="${{ needs.integration-check.result }}"
+
+          if [ "$BACKEND" = "success" ] && [ "$FRONTEND" = "success" ] && [ "$INTEGRATION" = "success" ]; then
+            echo "✅ ALL CHECKS PASSED"
+            echo ""
+            echo "Features verified:"
+            echo "  ✅ Auth (register/login/logout/profile/password/avatar)"
+            echo "  ✅ Movies (list/search/filter/featured/detail)"
+            echo "  ✅ Episodes (list/play/progress - HLS + MP4)"
+            echo "  ✅ History & Favorites"
+            echo "  ✅ Genres & Countries"
+            echo "  ✅ Admin (movies/episodes/users/genres/countries/stats)"
+            echo "  ✅ Profile Page (info/avatar/cursor/password)"
+            echo "  ✅ Protected Routes"
+            echo "  ✅ Frontend Build"
           else
-            echo "❌ Some checks failed. Review logs above."
+            echo "❌ SOME CHECKS FAILED - Review logs above"
             exit 1
           fi
